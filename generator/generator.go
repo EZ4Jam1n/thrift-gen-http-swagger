@@ -75,23 +75,23 @@ func (g *OpenAPIGenerator) BuildDocument(arguments *args.Arguments) []*plugin.Ge
 	}
 
 	var extDocument *openapi.Document
-	g.getDocumentOption(&extDocument)
+	err := g.getDocumentOption(&extDocument)
+	if err != nil {
+		fmt.Printf("Error getting document option: %s\n", err)
+		return nil
+	}
 	if extDocument != nil {
 		utils.MergeStructs(d, extDocument)
 	}
 
 	g.addPathsToDocument(d, g.ast.Services)
 
-	// While we have required schemas left to generate, go through the files again
-	// looking for the related message and adding them to the document if required.
 	for len(g.requiredSchemas) > 0 {
 		count := len(g.requiredSchemas)
 		g.addSchemasForStructsToDocument(d, g.ast.GetStructLikes())
 		g.requiredSchemas = g.requiredSchemas[count:len(g.requiredSchemas)]
 	}
 
-	// If there is only 1 service, then use it's title for the
-	// document, if the document is missing it.
 	if len(d.Tags) == 1 {
 		if d.Info.Title == "" && d.Tags[0].Name != "" {
 			d.Info.Title = d.Tags[0].Name + " API"
@@ -108,7 +108,6 @@ func (g *OpenAPIGenerator) BuildDocument(arguments *args.Arguments) []*plugin.Ge
 	for _, path := range d.Paths.Path {
 		var servers []string
 		// Only 1 server will ever be set, per method, by the generator
-
 		if path.Value.Get != nil && len(path.Value.Get.Servers) == 1 {
 			servers = utils.AppendUnique(servers, path.Value.Get.Servers[0].URL)
 			allServers = utils.AppendUnique(allServers, path.Value.Get.Servers[0].URL)
@@ -165,7 +164,7 @@ func (g *OpenAPIGenerator) BuildDocument(arguments *args.Arguments) []*plugin.Ge
 			path.Value.Servers = nil
 		}
 	}
-	// Sort the tags.
+
 	{
 		pairs := d.Tags
 		sort.Slice(pairs, func(i, j int) bool {
@@ -173,7 +172,7 @@ func (g *OpenAPIGenerator) BuildDocument(arguments *args.Arguments) []*plugin.Ge
 		})
 		d.Tags = pairs
 	}
-	// Sort the paths.
+
 	{
 		pairs := d.Paths.Path
 		sort.Slice(pairs, func(i, j int) bool {
@@ -181,7 +180,7 @@ func (g *OpenAPIGenerator) BuildDocument(arguments *args.Arguments) []*plugin.Ge
 		})
 		d.Paths.Path = pairs
 	}
-	// Sort the schemas.
+
 	{
 		pairs := d.Components.Schemas.AdditionalProperties
 		sort.Slice(pairs, func(i, j int) bool {
@@ -193,6 +192,7 @@ func (g *OpenAPIGenerator) BuildDocument(arguments *args.Arguments) []*plugin.Ge
 	bytes, err := d.YAMLValue("Generated with thrift-gen-http-swagger\n" + infoURL)
 	if err != nil {
 		fmt.Printf("Error converting to yaml: %s\n", err)
+		return nil
 	}
 	filePath := filepath.Clean(arguments.OutputDir)
 	filePath = filepath.Join(filePath, "openapi.yaml")
@@ -219,11 +219,9 @@ func (g *OpenAPIGenerator) getDocumentOption(obj interface{}) error {
 
 func (g *OpenAPIGenerator) addPathsToDocument(d *openapi.Document, services []*parser.Service) {
 	for _, s := range services {
-
 		annotationsCount := 0
 		for _, f := range s.Functions {
 			comment := g.filterCommentString(f.ReservedComments)
-
 			operationID := s.GetName() + "_" + f.GetName()
 			rs := utils.GetAnnotations(f.Annotations, HttpMethodAnnotations)
 			if len(rs) == 0 {
@@ -242,7 +240,6 @@ func (g *OpenAPIGenerator) addPathsToDocument(d *openapi.Document, services []*p
 				if methodName != "" {
 					annotationsCount++
 					var host string
-
 					hostOrNil := utils.GetAnnotation(f.Annotations, ApiBaseURL)
 
 					if len(hostOrNil) != 0 {
@@ -291,6 +288,7 @@ func (g *OpenAPIGenerator) buildOperation(
 		var paramName, paramIn, paramDesc string
 		var fieldSchema *openapi.SchemaOrReference
 		required := false
+
 		extOrNil := v.Annotations[ApiQuery]
 		if len(extOrNil) > 0 {
 			if ext := v.Annotations[ApiQuery][0]; ext != "" {
@@ -360,9 +358,11 @@ func (g *OpenAPIGenerator) buildOperation(
 			Required:    required,
 			Schema:      fieldSchema,
 		}
+
 		var extParameter *openapi.Parameter
 		utils.ParseFieldOption(v, OpenapiParameter, &extParameter)
 		utils.MergeStructs(parameter, extParameter)
+
 		// Append the parameter to the parameters array if it was set
 		if paramName != "" && paramIn != "" {
 			parameters = append(parameters, &openapi.ParameterOrReference{
@@ -370,6 +370,7 @@ func (g *OpenAPIGenerator) buildOperation(
 			})
 		}
 	}
+
 	var RequestBody *openapi.RequestBodyOrReference
 	if methodName != "GET" && methodName != "HEAD" && methodName != "DELETE" {
 		bodySchema := g.getSchemaByOption(inputDesc, ApiBody)
@@ -387,6 +388,7 @@ func (g *OpenAPIGenerator) buildOperation(
 				},
 			})
 		}
+
 		if len(formSchema.Properties.AdditionalProperties) > 0 {
 			additionalProperties = append(additionalProperties, &openapi.NamedMediaType{
 				Name: "multipart/form-data",
@@ -408,6 +410,7 @@ func (g *OpenAPIGenerator) buildOperation(
 				},
 			})
 		}
+
 		if len(additionalProperties) > 0 {
 			RequestBody = &openapi.RequestBodyOrReference{
 				RequestBody: &openapi.RequestBody{
@@ -422,7 +425,6 @@ func (g *OpenAPIGenerator) buildOperation(
 	}
 
 	name, header, content := g.getResponseForStruct(d, outputDesc)
-
 	desc := g.filterCommentString(outputDesc.Comments)
 
 	if desc == "" {
@@ -440,6 +442,7 @@ func (g *OpenAPIGenerator) buildOperation(
 	if len(content.AdditionalProperties) != 0 {
 		contentOrEmpty = content
 	}
+
 	var responses *openapi.Responses
 	if headerOrEmpty != nil || contentOrEmpty != nil {
 		responses = &openapi.Responses{
@@ -469,6 +472,7 @@ func (g *OpenAPIGenerator) buildOperation(
 		Responses:   responses,
 		RequestBody: RequestBody,
 	}
+
 	if host != "" {
 		if !strings.HasPrefix(host, "http://") && !strings.HasPrefix(host, "https://") {
 			host = "http://" + host
@@ -570,6 +574,7 @@ func (g *OpenAPIGenerator) getSchemaByOption(inputDesc *thrift_reflection.Struct
 	definitionProperties := &openapi.Properties{
 		AdditionalProperties: make([]*openapi.NamedSchemaOrReference, 0),
 	}
+
 	var allRequired []string
 	var extSchema *openapi.Schema
 	utils.ParseStructOption(inputDesc, OpenapiSchema, &extSchema)
@@ -578,31 +583,33 @@ func (g *OpenAPIGenerator) getSchemaByOption(inputDesc *thrift_reflection.Struct
 			allRequired = extSchema.Required
 		}
 	}
-	var required []string
 
+	var required []string
 	for _, field := range inputDesc.GetFields() {
 		if field.Annotations[option] != nil {
 			extName := field.GetName()
-			if field.Annotations[option] != nil {
-				if field.Annotations[option][0] != "" {
-					extName = field.Annotations[option][0]
-				}
+			if field.Annotations[option] != nil && field.Annotations[option][0] != "" {
+				extName = field.Annotations[option][0]
 			}
+
 			if utils.Contains(allRequired, extName) {
 				required = append(required, extName)
 			}
+
 			// Get the field description from the comments.
 			description := g.filterCommentString(field.Comments)
 			fieldSchema := g.schemaOrReferenceForField(field.Type)
 			if fieldSchema == nil {
 				continue
 			}
+
 			if fieldSchema.IsSetSchema() {
 				fieldSchema.Schema.Description = description
 				newFieldSchema := &openapi.Schema{}
 				utils.ParseFieldOption(field, OpenapiProperty, &newFieldSchema)
 				utils.MergeStructs(fieldSchema.Schema, newFieldSchema)
 			}
+
 			definitionProperties.AdditionalProperties = append(
 				definitionProperties.AdditionalProperties,
 				&openapi.NamedSchemaOrReference{
@@ -612,13 +619,16 @@ func (g *OpenAPIGenerator) getSchemaByOption(inputDesc *thrift_reflection.Struct
 			)
 		}
 	}
+
 	schema := &openapi.Schema{
 		Type:       "object",
 		Properties: definitionProperties,
 	}
+
 	if extSchema != nil {
 		utils.MergeStructs(schema, extSchema)
 	}
+
 	schema.Required = required
 	return schema
 }
@@ -636,6 +646,7 @@ func (g *OpenAPIGenerator) getStructLikeByName(name string) *parser.StructLike {
 func (g *OpenAPIGenerator) filterCommentString(str string) string {
 	var comments []string
 	matches := g.commentPattern.FindAllStringSubmatch(str, -1)
+
 	for _, match := range matches {
 		var comment string
 		if match[1] != "" {
@@ -691,21 +702,22 @@ func (g *OpenAPIGenerator) addSchemasForStructsToDocument(d *openapi.Document, s
 			if fieldSchema == nil {
 				continue
 			}
+
 			if fieldSchema.IsSetSchema() {
 				fieldSchema.Schema.Description = description
 				newFieldSchema := &openapi.Schema{}
 				utils.ParseFieldOption(field, OpenapiProperty, &newFieldSchema)
 				utils.MergeStructs(fieldSchema.Schema, newFieldSchema)
 			}
+
 			extName := field.GetName()
 			options := []string{ApiHeader, ApiBody, ApiForm, ApiRawBody}
 			for _, option := range options {
-				if field.Annotations[option] != nil {
-					if field.Annotations[option][0] != "" {
-						extName = field.Annotations[option][0]
-					}
+				if field.Annotations[option] != nil && field.Annotations[option][0] != "" {
+					extName = field.Annotations[option][0]
 				}
 			}
+
 			definitionProperties.AdditionalProperties = append(
 				definitionProperties.AdditionalProperties,
 				&openapi.NamedSchemaOrReference{
@@ -714,16 +726,19 @@ func (g *OpenAPIGenerator) addSchemasForStructsToDocument(d *openapi.Document, s
 				},
 			)
 		}
+
 		schema := &openapi.Schema{
 			Type:        "object",
 			Description: messageDescription,
 			Properties:  definitionProperties,
 		}
+
 		var extSchema *openapi.Schema
 		utils.ParseStructOption(structDesc, OpenapiSchema, &extSchema)
 		if extSchema != nil {
 			utils.MergeStructs(schema, extSchema)
 		}
+
 		// Add the schema to the components.schema list.
 		g.addSchemaToDocument(d, &openapi.NamedSchemaOrReference{
 			Name: schemaName,
